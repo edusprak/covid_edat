@@ -1,0 +1,107 @@
+---
+title: "Casos COVID per mes i franja d'edat"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Llibreries
+library(dplyr)
+library(readr)
+library(lubridate)
+library(ggplot2)
+library(tidyr)
+
+# Locale a catala
+Sys.setlocale("LC_ALL","Catalan")
+
+# Dades de contagis
+dades <- readr::read_csv2("https://analisi.transparenciacatalunya.cat/api/views/qwj8-xpvk/rows.csv?accessType=DOWNLOAD&bom=true&format=true&delimiter=%3B&sorting=true", na = "")
+
+# Normalitzem noms de columnes
+colnames(dades) <- stringi::stri_trans_general(sapply(colnames(dades), function(x) trimws(strsplit(x, "/")[[1]][1])), "Latin-ASCII")
+
+# Eliminem no classificats i 90+
+dades <-
+  dades %>% 
+  filter(!EdatRang %in% c("No classificat", "90+"))
+
+# Agreguem info per mes i franja d'edat
+dades_agg <- 
+  dades %>% 
+  group_by(Mes = lubridate::month(TipusCasData, label = TRUE, abbr = FALSE), EdatRang) %>% 
+  summarise(SumaCasos = sum(NumCasos)) %>% 
+  ungroup() %>% 
+  group_by(Mes) %>% 
+  mutate(SumCasosPonderat = SumaCasos/sum(SumaCasos)) %>% 
+  ungroup()
+
+p1 <- ggplot(dades_agg, aes(x = Mes, y = EdatRang, fill = SumCasosPonderat)) +
+  geom_tile() +
+  scale_fill_distiller(palette='Spectral') +
+  labs(fill = "Rati de contagis")
+
+
+# Distribucio poblacio Catalunya per edat
+file_edat <- 't1180.csv'
+dades_edat <- read_csv2(file_edat, skip = 5)
+
+dades_edat[['EdatRang']] <- as.factor(ceiling(1:nrow(dades_edat)/10))
+
+levels(dades_edat[['EdatRang']]) <- c("0-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70-79", "80-89", "90-99", "100+")
+
+
+# Fem reshape de les dades
+dades_edat <- pivot_longer(dades_edat, cols = c('Homes', 'Dones'), names_to = 'Genere')
+
+dades_edat_agg <-
+  dades_edat %>% 
+  # ens quedem fins 89 anys
+  filter(!EdatRang %in% c("90-99", "100+")) %>% 
+  group_by(EdatRang, Genere) %>% 
+  summarise(Total = sum(value), .groups = 'drop') %>% 
+  ungroup()
+
+p2 <- ggplot(data = dades_edat_agg, 
+       mapping = aes(x = ifelse(test = Genere == "Homes", yes = -Total, no = Total), 
+                     y = EdatRang, fill = Genere)) +
+      geom_col() +
+      labs(x = "Població")
+
+
+dades_edat_agg <-
+  dades_edat_agg %>% 
+  group_by(EdatRang) %>% 
+  summarise(Total = sum(Total))
+  
+dades_agg <- dades_agg %>% 
+  left_join(dades_edat_agg) %>% 
+  mutate(ContagisSobreTotal = SumaCasos/Total) %>% 
+  group_by(Mes) %>% 
+  mutate(ContagisSobreTotalPonderat = ContagisSobreTotal/sum(ContagisSobreTotal)) %>% 
+  ungroup()
+
+p3 <- ggplot(dades_agg, aes(x = Mes, y = EdatRang, fill = ContagisSobreTotalPonderat)) +
+  geom_tile() +
+  scale_fill_distiller(palette='Spectral') +
+  labs(fill = "Rati de contagis")
+```
+
+## Casos per edat
+Distribució dels contagis de COVID detectats per trams d'edat:
+
+
+```{r, echo=FALSE}
+plot(p1)
+```
+
+## Casos per edat ponderat per corba demogràfica
+Segons l'IDESCAT la distribució de població per edats a Catalunya és la següent:
+```{r, echo=FALSE}
+plot(p2)
+```
+
+Si usem aquesta informació per ponderar els grups de població contagiats, tenim la següent distribució de contagis:
+
+```{r, echo=FALSE}
+plot(p3)
+```
